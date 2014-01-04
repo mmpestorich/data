@@ -1433,7 +1433,20 @@ DS.Store = Ember.Object.extend({
 });
 
 function normalizeRelationships(store, type, data, record) {
-  type.eachRelationship(function(key, relationship) {
+  var adapter = store.adapterFor(type),
+      serializer = serializerForAdapter(adapter, type);
+
+  type.eachRelationship(function (key, relationship) {
+    var kind = relationship.kind;
+
+    if (kind === 'belongsTo' && serializer.materializeBelongsTo) {
+      serializer.materializeBelongsTo(key, record, data, relationship);
+      return;
+    } else if (kind === 'hasMany' && serializer.materializeHasMany) {
+      serializer.materializeHasMany(key, record, data, relationship);
+      return;
+    }
+
     // A link (usually a URL) was already provided in
     // normalized form
     if (data.links && data.links[key]) {
@@ -1441,8 +1454,7 @@ function normalizeRelationships(store, type, data, record) {
       return;
     }
 
-    var kind = relationship.kind,
-        value = data[key];
+    var value = data[key];
 
     if (value == null) { return; }
 
