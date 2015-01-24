@@ -1,7 +1,7 @@
 import RootState from "ember-data/system/model/states";
 import Errors from "ember-data/system/model/errors";
 import { PromiseObject } from "ember-data/system/promise_proxies";
-import { createRelationshipFor } from "ember-data/system/relationships/relationship";
+import Relationship from "ember-data/system/relationships/relationship";
 
 /**
   @module ember-data
@@ -44,9 +44,98 @@ function extractPivotName(name) {
   @uses Ember.Evented
 */
 var Model = Ember.Object.extend(Ember.Evented, {
-  _recordArrays: undefined,
+
+  _data: undefined,
+
+  _attributes: undefined,
+
+  _inFlightAttributes: undefined,
+  
+  /**
+    Relationships are ...
+   
+    Implicit relationships are relationships which have not been declared but 
+    the inverse side exists on another record somewhere, For example:
+    
+    ```
+    App.Comment = DS.Model.extend({
+      name: DS.attr()
+    });
+    
+    App.Post = DS.Model.extend({
+      name: DS.attr(),
+      comments: DS.hasMany('comment')
+    });
+
+    var comment = store.createRecord('comment', { id: 1, name: 'Good Job' });
+    var post = store.createRecord('post', { id: 1, name: 'Tom', comments: [1] });
+    comment.deleteRecord();
+    person.get('comments.length') === 0 // -> true
+    ```
+    
+    In this case, `comment` would be generated an 'implicit' relationship to 
+    `post` (added as `comment._relationships.__implicit__post`). However,
+    `comment` will still not have a computed property (i.e. `DS.belongsTo` or 
+    `DS.hasMany`) allowing direct access to it from `comment`. This means that 
+    helpers like `comment.eachRelationship` will only iterate over explicitly 
+    defined relationships.
+    
+    This allows `comment` to remove itself from the explicitly defined inverse
+   `post.comments` relationship when it is deleted.
+   
+    @property _relationships
+    @type {Object}
+    @private
+  */
   _relationships: undefined,
+
+  _recordArrays: undefined,
+  
   _loadingRecordArrays: undefined,
+
+  _deferredTriggers: undefined,
+  
+  // Required Properties
+  
+  /**
+    All ember models have an id property. This is an identifier
+    managed by an external source. These are always coerced to be
+    strings before being used internally. Note when declaring the
+    attributes for a model it is an error to declare an id
+    attribute.
+
+    ```javascript
+    var record = store.createRecord('model');
+    record.get('id'); // null
+
+    store.find('model', 1).then(function(model) {
+      model.get('id'); // '1'
+    });
+    ```
+
+    @property id
+    @type {String}
+  */
+  id: null,
+  
+  /**
+    All ember models have a data property. It contains the most recent snapshot
+    of unmodified data for this model's id as last returned by this model's 
+    adapter.
+   
+    @property data
+    @type {Object}
+    @private
+  */
+  data: Ember.computed(function() {
+    this._data = this._data || {};
+    return this._data;
+  }).readOnly(),
+  
+  transaction: null,
+  
+  // State
+  
   /**
     If this property is `true` the record is in the `empty`
     state. Empty is the first state all records enter after they have
@@ -61,6 +150,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @readOnly
   */
   isEmpty: retrieveFromCurrentState,
+  
   /**
     If this property is `true` the record is in the `loading` state. A
     record enters this state when the store asks the adapter for its
@@ -72,6 +162,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @readOnly
   */
   isLoading: retrieveFromCurrentState,
+  
   /**
     If this property is `true` the record is in the `loaded` state. A
     record enters this state when its data is populated. Most of a
@@ -94,6 +185,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @readOnly
   */
   isLoaded: retrieveFromCurrentState,
+  
   /**
     If this property is `true` the record is in the `dirty` state. The
     record has local changes that have not yet been saved by the
@@ -118,6 +210,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @readOnly
   */
   isDirty: retrieveFromCurrentState,
+  
   /**
     If this property is `true` the record is in the `saving` state. A
     record enters the saving state when `save` is called, but the
@@ -141,6 +234,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @readOnly
   */
   isSaving: retrieveFromCurrentState,
+  
   /**
     If this property is `true` the record is in the `deleted` state
     and has been marked for deletion. When `isDeleted` is true and
@@ -179,6 +273,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @readOnly
   */
   isDeleted: retrieveFromCurrentState,
+  
   /**
     If this property is `true` the record is in the `new` state. A
     record will be in the `new` state when it has been created on the
@@ -201,6 +296,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @readOnly
   */
   isNew: retrieveFromCurrentState,
+  
   /**
     If this property is `true` the record is in the `valid` state.
 
@@ -212,27 +308,6 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @readOnly
   */
   isValid: retrieveFromCurrentState,
-  /**
-    If the record is in the dirty state this property will report what
-    kind of change has caused it to move into the dirty
-    state. Possible values are:
-
-    - `created` The record has been created by the client and not yet saved to the adapter.
-    - `updated` The record has been updated by the client and not yet saved to the adapter.
-    - `deleted` The record has been deleted by the client and not yet saved to the adapter.
-
-    Example
-
-    ```javascript
-    var record = store.createRecord('model');
-    record.get('dirtyType'); // 'created'
-    ```
-
-    @property dirtyType
-    @type {String}
-    @readOnly
-  */
-  dirtyType: retrieveFromCurrentState,
 
   /**
     If `true` the adapter reported that it was unable to save local
@@ -254,6 +329,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @readOnly
   */
   isError: false,
+  
   /**
     If `true` the store is attempting to reload the record form the adapter.
 
@@ -272,43 +348,33 @@ var Model = Ember.Object.extend(Ember.Evented, {
   isReloading: false,
 
   /**
-    The `clientId` property is a transient numerical identifier
-    generated at runtime by the data store. It is important
-    primarily because newly created objects may not yet have an
-    externally generated id.
-
-    @property clientId
-    @private
-    @type {Number|String}
-  */
-  clientId: null,
-  /**
-    All ember models have an id property. This is an identifier
-    managed by an external source. These are always coerced to be
-    strings before being used internally. Note when declaring the
-    attributes for a model it is an error to declare an id
-    attribute.
-
-    ```javascript
-    var record = store.createRecord('model');
-    record.get('id'); // null
-
-    store.find('model', 1).then(function(model) {
-      model.get('id'); // '1'
-    });
-    ```
-
-    @property id
-    @type {String}
-  */
-  id: null,
-
-  /**
     @property currentState
     @private
     @type {Object}
   */
   currentState: RootState.empty,
+  
+  /**
+    If the record is in the dirty state this property will report what
+    kind of change has caused it to move into the dirty
+    state. Possible values are:
+
+    - `created` The record has been created by the client and not yet saved to the adapter.
+    - `updated` The record has been updated by the client and not yet saved to the adapter.
+    - `deleted` The record has been deleted by the client and not yet saved to the adapter.
+
+    Example
+
+    ```javascript
+    var record = store.createRecord('model');
+    record.get('dirtyType'); // 'created'
+    ```
+
+    @property dirtyType
+    @type {String}
+    @readOnly
+  */
+  dirtyType: retrieveFromCurrentState,
 
   /**
     When the record is in the `invalid` state this object will contain
@@ -339,45 +405,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
     return errors;
   }).readOnly(),
 
-  /**
-    Create a JSON representation of the record, using the serialization
-    strategy of the store's adapter.
-
-   `serialize` takes an optional hash as a parameter, currently
-    supported options are:
-
-   - `includeId`: `true` if the record's ID should be included in the
-      JSON representation.
-
-    @method serialize
-    @param {Object} options
-    @return {Object} an object whose values are primitive JSON values only
-  */
-  serialize: function(options) {
-    var store = get(this, 'store');
-    return store.serialize(this, options);
-  },
-
-  /**
-    Use [DS.JSONSerializer](DS.JSONSerializer.html) to
-    get the JSON representation of a record.
-
-    `toJSON` takes an optional hash as a parameter, currently
-    supported options are:
-
-    - `includeId`: `true` if the record's ID should be included in the
-      JSON representation.
-
-    @method toJSON
-    @param {Object} options
-    @return {Object} A JSON representation of the object.
-  */
-  toJSON: function(options) {
-    if (!JSONSerializer) { JSONSerializer = requireModule("ember-data/serializers/json_serializer")["default"]; }
-    // container is for lazy transform lookups
-    var serializer = JSONSerializer.create({ container: this.container });
-    return serializer.serialize(this, options);
-  },
+  // Event Hooks
 
   /**
     Fired when the record is loaded from the server.
@@ -421,64 +449,29 @@ var Model = Ember.Object.extend(Ember.Evented, {
   */
   becameError: Ember.K,
 
-  /**
-    @property data
-    @private
-    @type {Object}
-  */
-  data: Ember.computed(function() {
-    this._data = this._data || {};
-    return this._data;
-  }).readOnly(),
-
-  _data: null,
-
   init: function() {
     this._super();
     this._setup();
   },
 
   _setup: function() {
-    this._changesToSync = {};
     this._deferredTriggers = [];
-    this._data = {};
-    this._attributes = {};
-    this._inFlightAttributes = {};
-    this._relationships = {};
-    /*
-      implicit relationships are relationship which have not been declared but the inverse side exists on
-      another record somewhere
-      For example if there was
-      ```
-        App.Comment = DS.Model.extend({
-          name: DS.attr()
-        })
-      ```
-      but there is also
-      ```
-        App.Post = DS.Model.extend({
-          name: DS.attr(),
-          comments: DS.hasMany('comment')
-        })
-      ```
-
-      would have a implicit post relationship in order to be do things like remove ourselves from the post
-      when we are deleted
-    */
-    this._implicitRelationships = Object.create(null);
-    var model = this;
+    this._data = Object.create(null);
+    this._attributes = Object.create(null);
+    this._inFlightAttributes = Object.create(null);
+    this._relationships = Object.create(null);
+    var record = this;
     //TODO Move into a getter for better perf
-    this.constructor.eachRelationship(function(key, descriptor) {
-        model._relationships[key] = createRelationshipFor(model, descriptor, model.store);
+    this.constructor.eachRelationship(function(key, meta) {
+        record._relationships[key] = Relationship.create(record, meta);
     });
-
   },
 
   /**
     @method send
     @private
     @param {String} name
-    @param {Object} context
+    @param {Object} [context]
   */
   send: function(name, context) {
     var currentState = get(this, 'currentState');
@@ -653,36 +646,34 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @private
   */
   clearRelationships: function() {
-    this.eachRelationship(function(name, relationship) {
-      var rel = this._relationships[name];
-      if (rel){
-        //TODO(Igor) figure out whether we want to clear or disconnect
-        rel.clear();
-        rel.destroy();
-      }
-    }, this);
+    var relationships = this._relationships;
+    for (var key in relationships) {
+      relationships[key].clear();
+      relationships[key].destroy();
+    }
   },
 
+  /**
+    @method disconnectRelationships
+    @private
+  */
   disconnectRelationships: function() {
-    this.eachRelationship(function(name, relationship) {
-      this._relationships[name].disconnect();
-    }, this);
-    var model = this;
-    forEach.call(Ember.keys(this._implicitRelationships), function(key) {
-      model._implicitRelationships[key].disconnect();
-    });
+    var relationships = this._relationships;
+    for (var key in relationships) {
+      relationships[key].disconnect();
+    }
   },
 
+  /**
+    @method reconnectRelationships
+    @private
+  */
   reconnectRelationships: function() {
-    this.eachRelationship(function(name, relationship) {
-      this._relationships[name].reconnect();
-    }, this);
-    var model = this;
-    forEach.call(Ember.keys(this._implicitRelationships), function(key) {
-      model._implicitRelationships[key].reconnect();
-    });
+    var relationships = this._relationships;
+    for (var key in relationships) {
+      relationships[key].reconnect();
+    }
   },
-
 
   /**
     @method updateRecordArrays
@@ -734,14 +725,13 @@ var Model = Ember.Object.extend(Ember.Evented, {
 
   _preloadHasMany: function(key, preloadValue, type) {
     Ember.assert("You need to pass in an array to set a hasMany property on a record", Ember.isArray(preloadValue));
-    var record = this;
 
     var recordsToSet = map.call(preloadValue, function(recordToPush) {
-      return record._convertStringOrNumberIntoRecord(recordToPush, type);
-    });
+      return this._convertStringOrNumberIntoRecord(recordToPush, type);
+    }, this);
     //We use the pathway of setting the hasMany as if it came from the adapter
     //because the user told us that they know this relationships exists already
-    this._relationships[key].updateRecordsFromAdapter(recordsToSet);
+    this._relationships[key].sync(recordsToSet);
   },
 
   _preloadBelongsTo: function(key, preloadValue, type){
@@ -749,7 +739,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
 
     //We use the pathway of setting the hasMany as if it came from the adapter
     //because the user told us that they know this relationships exists already
-    this._relationships[key].setRecord(recordToSet);
+    this._relationships[key].sync(recordToSet);
   },
 
   _convertStringOrNumberIntoRecord: function(value, type) {
@@ -783,7 +773,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
   changedAttributes: function() {
     var oldData = get(this, '_data');
     var newData = get(this, '_attributes');
-    var diffData = {};
+    var diffData = Object.create(null);
     var prop;
 
     for (prop in newData) {
@@ -814,10 +804,14 @@ var Model = Ember.Object.extend(Ember.Evented, {
     if (data) {
       this._data = data;
     } else {
-      Ember.mixin(this._data, this._inFlightAttributes);
+      var _data = this._data,
+          _inFlightAttributes = this._inFlightAttributes;
+      for (var key in _inFlightAttributes) {
+        _data[key] = _inFlightAttributes[key];
+      }
     }
 
-    this._inFlightAttributes = {};
+    this._inFlightAttributes = Object.create(null);
 
     this.send('didCommit');
     this.updateRecordArraysLater();
@@ -835,7 +829,6 @@ var Model = Ember.Object.extend(Ember.Evented, {
     this.send('becomeDirty');
     this.updateRecordArraysLater();
   },
-
 
   /**
     @method updateRecordArraysLater
@@ -898,22 +891,20 @@ var Model = Ember.Object.extend(Ember.Evented, {
     @method rollback
   */
   rollback: function() {
-    this._attributes = {};
+    this._attributes = Object.create(null);
 
     if (get(this, 'isError')) {
-      this._inFlightAttributes = {};
+      this._inFlightAttributes = Object.create(null);
       set(this, 'isError', false);
     }
 
-    //Eventually rollback will always work for relationships
-    //For now we support it only out of deleted state, because we
-    //have an explicit way of knowing when the server acked the relationship change
-    if (get(this, 'isDeleted')) {
-      this.reconnectRelationships();
+    var relationships = this._relationships;
+    for (var key in relationships) {
+      relationships[key].rollback();
     }
 
     if (!get(this, 'isValid')) {
-      this._inFlightAttributes = {};
+      this._inFlightAttributes = Object.create(null);
     }
 
     this.send('rolledBack');
@@ -949,7 +940,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
 
     this.get('store').scheduleSave(this, resolver);
     this._inFlightAttributes = this._attributes;
-    this._attributes = {};
+    this._attributes = Object.create(null);
 
     return PromiseObject.create({
       promise: resolver.promise
@@ -1005,6 +996,48 @@ var Model = Ember.Object.extend(Ember.Evented, {
     });
   },
 
+  // Serialize
+  
+  /**
+    Create a JSON representation of the record, using the serialization
+    strategy of the store's adapter.
+
+   `serialize` takes an optional hash as a parameter, currently
+    supported options are:
+
+   - `includeId`: `true` if the record's ID should be included in the
+      JSON representation.
+
+    @method serialize
+    @param {Object} options
+    @return {Object} an object whose values are primitive JSON values only
+  */
+  serialize: function(options) {
+    var store = get(this, 'store');
+    return store.serialize(this, options);
+  },
+
+  /**
+    Use [DS.JSONSerializer](DS.JSONSerializer.html) to
+    get the JSON representation of a record.
+
+    `toJSON` takes an optional hash as a parameter, currently
+    supported options are:
+
+    - `includeId`: `true` if the record's ID should be included in the
+      JSON representation.
+
+    @method toJSON
+    @param {Object} options
+    @return {Object} A JSON representation of the object.
+  */
+  toJSON: function(options) {
+    if (!JSONSerializer) { JSONSerializer = requireModule("ember-data/serializers/json_serializer")["default"]; }
+    // container is for lazy transform lookups
+    var serializer = JSONSerializer.create({ container: this.container });
+    return serializer.serialize(this, options);
+  },
+  
   // FOR USE DURING COMMIT PROCESS
 
   adapterDidUpdateAttribute: function(attributeName, value) {
@@ -1104,6 +1137,7 @@ var Model = Ember.Object.extend(Ember.Evented, {
 });
 
 Model.reopenClass({
+  
   /**
     Alias DS.Model's `create` method to `_create`. This allows us to create DS.Model
     instances from within the store, but if end users accidentally call `create()`

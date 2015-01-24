@@ -2,12 +2,9 @@
   @module ember-data
 */
 
-import {
-  RecordArray,
-  FilteredRecordArray,
-  AdapterPopulatedRecordArray,
-  ManyArray
-} from "ember-data/system/record_arrays";
+import RecordArray from "ember-data/system/record_arrays/record_array";
+import FilteredRecordArray from "ember-data/system/record_arrays/filtered_record_array";
+import AdapterPopulatedRecordArray from "ember-data/system/record_arrays/adapter_populated_record_array";
 import {
   MapWithDefault,
   OrderedSet
@@ -51,8 +48,6 @@ export default Ember.Object.extend({
     To avoid thrashing, it only runs at most once per run loop.
 
     @method updateRecordArrays
-    @param {Class} type
-    @param {Number|String} clientId
   */
   updateRecordArrays: function() {
     forEach(this.changedRecords, function(record) {
@@ -88,15 +83,12 @@ export default Ember.Object.extend({
       this.updateRecordArray(array, filter, type, record);
     }, this);
 
-    // loop through all manyArrays containing an unloaded copy of this
-    // clientId and notify them that the record was loaded.
     var manyArrays = record._loadingRecordArrays;
 
     if (manyArrays) {
       for (var i=0, l=manyArrays.length; i<l; i++) {
         manyArrays[i].loadedRecord();
       }
-
       record._loadingRecordArrays = [];
     }
   },
@@ -108,7 +100,7 @@ export default Ember.Object.extend({
     @param {DS.FilteredRecordArray} array
     @param {Function} filter
     @param {Class} type
-    @param {Number|String} clientId
+    @param {DS.Model} record
   */
   updateRecordArray: function(array, filter, type, record) {
     var shouldBeInArray;
@@ -155,31 +147,6 @@ export default Ember.Object.extend({
         this.updateRecordArray(array, filter, type, record);
       }
     }
-  },
-
-  /**
-    Create a `DS.ManyArray` for a type and list of record references, and index
-    the `ManyArray` under each reference. This allows us to efficiently remove
-    records from `ManyArray`s when they are deleted.
-
-    @method createManyArray
-    @param {Class} type
-    @param {Array} references
-    @return {DS.ManyArray}
-  */
-  createManyArray: function(type, records) {
-    var manyArray = ManyArray.create({
-      type: type,
-      content: records,
-      store: this.store
-    });
-
-    forEach(records, function(record) {
-      var arrays = this.recordArraysForRecord(record);
-      arrays.add(manyArray);
-    }, this);
-
-    return manyArray;
   },
 
   /**

@@ -103,13 +103,13 @@ export default Ember.Object.extend({
 
    @method applyTransforms
    @private
-   @param {subclass of DS.Model} type
+   @param {DS.Model} type
    @param {Object} data The data to transform
    @return {Object} data The transformed data object
   */
   applyTransforms: function(type, data) {
     type.eachTransformedAttribute(function applyTransform(key, type) {
-      if (!data.hasOwnProperty(key)) { return; }
+      if (!Object.prototype.hasOwnProperty.call(data, key)) { return; }
 
       var transform = this.transformFor(type);
       data[key] = transform.deserialize(data[key]);

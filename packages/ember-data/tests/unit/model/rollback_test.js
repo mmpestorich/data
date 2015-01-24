@@ -1,4 +1,4 @@
-var env, store, Person, Dog;
+var env, store, Address, Company, Person, Tag, Dog;
 
 module("unit/model/rollback - model.rollback()", {
   setup: function() {
@@ -24,6 +24,79 @@ test("changes to attributes can be rolled back", function() {
   equal(person.get('firstName'), "Tom");
   equal(person.get('isDirty'), false);
 });
+
+test("changes to a oneToOne relationship can be rolled back", function() {
+  var Address = DS.Model.extend({
+    address: DS.attr(),
+    person: DS.belongsTo('person')
+  });
+
+  var Person = DS.Model.extend({
+    firstName: DS.attr(),
+    lastName: DS.attr(),
+    address: DS.belongsTo('address')
+  });
+
+  var store = setupStore({ address: Address, person: Person }).store;
+
+  var address1 = store.push('address', { id: 1, address: "196 Woodside Circle Mobile, FL 36602" });
+  var address2 = store.push('address', { id: 2, address: "3756 Preston Street Wichita, KS 67213" });
+  var person = store.push('person', { id: 1, firstName: "Tom", lastName: "Dale", address: 1 });
+
+  person.set("address", address2);
+
+  equal(address1.get('isDirty'), true);
+  equal(address1.get("person"), null);
+  equal(address2.get('isDirty'), true);
+  equal(address2.get("person"), person);
+  equal(person.get('isDirty'), true);
+  equal(person.get("address"), address2);
+
+  person.rollback();
+
+  equal(address1.get('isDirty'), false);
+  equal(address1.get("person"), person);
+  equal(address2.get('isDirty'), false);
+  equal(address2.get("person"), null);
+  equal(person.get('isDirty'), false);
+  equal(person.get("address"), address1);
+});
+
+//test("changes to a oneToMany relationship can be rolled back", function() {
+//  var company1 = store.push('company', { id: 1, name: "Acme Corp" });
+//  var company2 = store.push('company', { id: 2, name: "Rich Industries" });
+//  var person = store.push('person', { id: 1, firstName: "Tom", lastName: "Dale", company: company1 });
+//
+//  person.set("company", company2);
+//
+//  equal(person.get('isDirty'), true);
+//  equal(person.get("company"), company2);
+//  deepEqual(company1.get("people").toArray(), []);
+//  deepEqual(company2.get("people").toArray(), [person]);
+//
+//  person.rollback();
+//
+//  equal(person.get('isDirty'), false);
+//  equal(person.get("company"), company1);
+//  deepEqual(company1.get("people").toArray(), [person]);
+//  deepEqual(company2.get("people").toArray(), []);
+//});
+
+//test("changes to a manyToMany relationship can be rolled back", function() {
+//  var person = store.push('person', { id: 1, firstName: "Tom", lastName: "Dale" });
+//  var tag1 = store.push('tag', { id: 1, name: "home" });
+//  var tag2 = store.push('tag', { id: 2, name: "work" });
+//
+//  person.set("company", company2);
+//
+//  equal(person.get("company.name"), "Rich Industries");
+//  equal(person.get('isDirty'), true);
+//
+//  person.rollback();
+//
+//  equal(person.get("company.name"), "Acme Corp");
+//  equal(person.get('isDirty'), false);
+//});
 
 test("changes to attributes made after a record is in-flight only rolls back the local changes", function() {
   env.adapter.updateRecord = function(store, type, record) {

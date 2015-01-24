@@ -19,6 +19,7 @@ var get = Ember.get;
 */
 
 export default Ember.ArrayProxy.extend(Ember.Evented, {
+  
   /**
     The model type contained by this record array.
 
@@ -53,6 +54,7 @@ export default Ember.ArrayProxy.extend(Ember.Evented, {
     @type Boolean
   */
   isLoaded: false,
+  
   /**
     The flag to signal a `RecordArray` is currently loading data.
 
@@ -146,7 +148,6 @@ export default Ember.ArrayProxy.extend(Ember.Evented, {
   pushRecord: function(record) {
     get(this, 'content').pushObject(record);
   },
-
 
   /**
     Removes a record to the `RecordArray`.

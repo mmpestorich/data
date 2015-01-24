@@ -457,6 +457,26 @@ var Adapter = Ember.Object.extend({
   */
   groupRecordsForFindMany: function (store, records) {
     return [records];
+  },
+
+  dirtyRecordForAttrChange: function (record, context) {
+    return context.originalValue !== context.value;
+  },
+
+  dirtyRecordForBelongsToChange: function (record, context) {
+    return context.originalValue !== context.value;
+  },
+
+  dirtyRecordForHasManyChange: function (record, context) {
+    var key = context.meta.key,
+        originalValue = context.meta.originalValue,
+        value = context.meta.value;
+    
+    var relationshipType = record.constructor.determineRelationshipType({ key: key, kind: 'hasMany' });
+    if (relationshipType === 'manyToMany' && originalValue) {
+      return originalValue.indexOf(value) === -1;
+    }
+    return false;
   }
 });
 

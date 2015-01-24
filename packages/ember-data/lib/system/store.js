@@ -33,7 +33,7 @@ var Store, RecordArrayManager, Model;
 
 var camelize = Ember.String.camelize;
 
-// Implementors Note:
+// Implementer's Note:
 //
 //   The variables in this file are consistently named according to the following
 //   scheme:
@@ -41,9 +41,6 @@ var camelize = Ember.String.camelize;
 //   * +id+ means an identifier managed by an external source, provided inside
 //     the data provided by that source. These are always coerced to be strings
 //     before being used internally.
-//   * +clientId+ means a transient numerical identifier generated at runtime by
-//     the data store. It is important primarily because newly created objects may
-//     not yet have an externally generated id.
 //   * +reference+ means a record reference object, which holds metadata about a
 //     record, even if it has not yet been fully materialized.
 //   * +type+ means a subclass of DS.Model.
@@ -715,7 +712,6 @@ Store = Ember.Object.extend({
     }));
   },
 
-
   /**
     If a relationship was originally populated by the adapter as a link
     (as opposed to a list of IDs), this method is called when the
@@ -866,7 +862,6 @@ Store = Ember.Object.extend({
     typeMap.findAllCache = array;
     return array;
   },
-
 
   /**
     This method unloads all of the known records for a given type.
@@ -1624,7 +1619,6 @@ Store = Ember.Object.extend({
   }
 });
 
-
 function normalizeRelationships(store, type, data, record) {
   type.eachRelationship(function(key, relationship) {
     var kind = relationship.kind;
@@ -1677,7 +1671,6 @@ function deserializeRecordIds(store, data, key, relationship, ids) {
 }
 
 // Delegation to the adapter and promise management
-
 
 function serializerFor(container, type, defaultSerializer) {
   return container.lookup('serializer:'+type) ||
@@ -1753,7 +1746,6 @@ function _find(adapter, store, type, id, record) {
   }, "DS: Extract payload of '" + type + "'");
 }
 
-
 function _findMany(adapter, store, type, ids, records) {
   var promise = adapter.findMany(store, type, ids, records);
   var serializer = serializerForAdapter(adapter, type);
@@ -1789,8 +1781,7 @@ function _findHasMany(adapter, store, record, link, relationship) {
 
     Ember.assert("The response from a findHasMany must be an Array, not " + Ember.inspect(payload), Ember.typeOf(payload) === 'array');
 
-    var records = store.pushMany(relationship.type, payload);
-    return records;
+    return store.pushMany(relationship.type, payload);
   }, null, "DS: Extract payload of " + record + " : hasMany " + relationship.type);
 }
 
@@ -1805,8 +1796,7 @@ function _findBelongsTo(adapter, store, record, link, relationship) {
 
   return promise.then(function(adapterPayload) {
     var payload = serializer.extract(store, relationship.type, adapterPayload, null, 'findBelongsTo');
-    var record = store.push(relationship.type, payload);
-    return record;
+    return store.push(relationship.type, payload);
   }, null, "DS: Extract payload of " + record + " : " + relationship.type);
 }
 
@@ -1887,7 +1877,6 @@ function setupRelationships(store, record, data) {
   var type = record.constructor;
 
   type.eachRelationship(function(key, descriptor) {
-    var kind = descriptor.kind;
     var value = data[key];
     var relationship = record._relationships[key];
 
@@ -1895,14 +1884,9 @@ function setupRelationships(store, record, data) {
       relationship.updateLink(data.links[key]);
     }
 
-    if (kind === 'belongsTo') {
-      if (value === undefined) {
-        return;
-      }
-      relationship.setRecord(value);
-    } else if (kind === 'hasMany' && value) {
-     relationship.updateRecordsFromAdapter(value);
-    }
+    if (value === undefined) { return; }
+
+    relationship.sync(value);
   });
 }
 

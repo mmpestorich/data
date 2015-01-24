@@ -10,7 +10,6 @@ Ember.RSVP.Promise.cast = Ember.RSVP.Promise.cast || Ember.RSVP.resolve;
 
 import DS from "ember-data/core";
 import "ember-data/ext/date";
-
 import {
   PromiseArray,
   PromiseObject
@@ -25,6 +24,14 @@ import {
   attr
 } from "ember-data/system/model";
 import {
+  ManyArray,
+  Relationship,
+  BelongsToRelationship,
+  belongsTo,
+  ManyRelationship,
+  hasMany
+} from "ember-data/system/relationships";
+import {
   InvalidError,
   Adapter
 } from "ember-data/system/adapter";
@@ -32,8 +39,7 @@ import DebugAdapter from "ember-data/system/debug";
 import {
   RecordArray,
   FilteredRecordArray,
-  AdapterPopulatedRecordArray,
-  ManyArray
+  AdapterPopulatedRecordArray
 } from "ember-data/system/record_arrays";
 import RecordArrayManager from "ember-data/system/record_array_manager";
 import {
@@ -48,7 +54,6 @@ import {
   ActiveModelAdapter,
   ActiveModelSerializer
 } from "activemodel-adapter";
-
 import {
   Transform,
   DateTransform,
@@ -56,13 +61,9 @@ import {
   StringTransform,
   BooleanTransform
 } from "ember-data/transforms";
-
-import {hasMany, belongsTo} from "ember-data/system/relationships";
 import "ember-data/ember-initializer";
 import setupContainer from "ember-data/setup-container";
-
 import ContainerProxy from "ember-data/system/container_proxy";
-import {Relationship} from "ember-data/system/relationships/relationship";
 
 DS.Store         = Store;
 DS.PromiseArray  = PromiseArray;
@@ -81,7 +82,6 @@ DS.DebugAdapter = DebugAdapter;
 DS.RecordArray                 = RecordArray;
 DS.FilteredRecordArray         = FilteredRecordArray;
 DS.AdapterPopulatedRecordArray = AdapterPopulatedRecordArray;
-DS.ManyArray                   = ManyArray;
 
 DS.RecordArrayManager = RecordArrayManager;
 
@@ -104,7 +104,10 @@ DS.EmbeddedRecordsMixin  = EmbeddedRecordsMixin;
 DS.belongsTo = belongsTo;
 DS.hasMany   = hasMany;
 
+DS.ManyArray = ManyArray;
 DS.Relationship  = Relationship;
+DS.BelongsToRelationship = BelongsToRelationship;
+DS.ManyRelationship = ManyRelationship;
 
 DS.ContainerProxy = ContainerProxy;
 

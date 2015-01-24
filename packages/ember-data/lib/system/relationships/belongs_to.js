@@ -1,5 +1,95 @@
-import { Model } from 'ember-data/system/model';
+import Model from "ember-data/system/model/model";
+import { PromiseObject } from "ember-data/system/promise_proxies";
+import Relationship from "ember-data/system/relationships/relationship";
 
+function BelongsToRelationship(record, meta) {
+  Relationship.prototype.constructor.call(this, record, meta);
+  this.record = record;
+  this.inverseRecord = null;
+}
+
+BelongsToRelationship.prototype = Object.create(Relationship.prototype);
+
+BelongsToRelationship.prototype.constructor = BelongsToRelationship;
+
+BelongsToRelationship.prototype.addRecord = function (record) {
+  if (this.members.has(record)) { return; }
+
+  Ember.assert("You can only add a '" + this.meta.type.typeKey + "' record to this relationship", record instanceof this.meta.type);
+
+  if (this.inverseRecord) {
+    this.removeRecord(this.inverseRecord);
+  }
+  
+  this.inverseRecord = record;
+  Relationship.prototype.addRecord.call(this, record);
+};
+
+BelongsToRelationship.prototype.removeRecordFromOwn = function (record) {
+  if (!this.members.has(record)) { return; }
+  Relationship.prototype.removeRecordFromOwn.call(this, record);
+  this.inverseRecord = null;
+};
+
+BelongsToRelationship.prototype.findRecord = function () {
+  if (this.inverseRecord) {
+    return this.record.store._findByRecord(this.inverseRecord);
+  } else {
+    return Ember.RSVP.Promise.resolve(null);
+  }
+};
+
+BelongsToRelationship.prototype.fetchLink = function () {
+  var self = this;
+  return this.record.store.findBelongsTo(this.record, this.link, this.meta).then(function (record) {
+    self.addRecord(record);
+    return record;
+  });
+};
+
+BelongsToRelationship.prototype.getRecord = function () {
+  if (this.meta.options.async) {
+    var promise;
+    if (this.link) {
+      var self = this;
+      promise = this.findLink().then(function () {
+        return self.findRecord();
+      });
+    } else {
+      promise = this.findRecord();
+    }
+
+    return PromiseObject.create({
+      promise: promise,
+      content: this.inverseRecord
+    });
+  } else {
+    Ember.assert("You looked up the '" + this.meta.key + "' relationship on a '" + this.record.constructor.typeKey + "' with id " + this.record.get('id') + " but some of the associated records were not loaded. Either make sure they are all loaded together with the parent record, or specify that the relationship is async (`DS.belongsTo({ async: true })`)", this.inverseRecord === null || !this.inverseRecord.get('isEmpty'));
+    return this.inverseRecord;
+  }
+};
+
+BelongsToRelationship.prototype.sync = function (record) {
+  if (record && record.then) {
+    record = record.get && record.get('content');
+    Ember.assert("You passed in a promise that did not originate from an EmberData relationship. You can only pass promises that come from a belongsTo or hasMany relationship to the get call.", record !== undefined);
+  }
+  if (record) {
+    this.addRecord(record);
+  } else if (this.inverseRecord) {
+    this.removeRecord(this.inverseRecord);
+  }
+};
+
+BelongsToRelationship.prototype.notifyRecordRelationshipChanged = function (record) {
+  var key = this.meta.key;
+  this.record.notifyPropertyChange(key);
+  this.record.send('propertyDidChange', {
+    meta: this.meta,
+    originalValue: this.record._data[key],
+    value: record
+  });
+};
 
 /**
   `DS.belongsTo` is used to define One-To-One and One-To-Many
@@ -44,7 +134,7 @@ import { Model } from 'ember-data/system/model';
   @namespace
   @method belongsTo
   @for DS
-  @param {String or DS.Model} type the model type of the relationship
+  @param {String|DS.Model} type the model type of the relationship
   @param {Object} options a hash of options
   @return {Ember.computed} relationship
 */
@@ -59,44 +149,24 @@ function belongsTo(type, options) {
   options = options || {};
 
   var meta = {
+    key: null,
     type: type,
     isRelationship: true,
-    options: options,
     kind: 'belongsTo',
-    key: null
+    options: options
   };
 
   return Ember.computed(function(key, value) {
     if (arguments.length>1) {
-      if ( value === undefined ) {
-        value = null;
-      }
-      if (value && value.then) {
-        this._relationships[key].setRecordPromise(value);
-      } else {
-        this._relationships[key].setRecord(value);
-      }
+      if ( value === undefined ) { value = null; }
+      this._relationships[key].sync(value);
     }
 
     return this._relationships[key].getRecord();
   }).meta(meta);
 }
 
-/**
-  These observers observe all `belongsTo` relationships on the record. See
-  `relationships/ext` to see how these observers get their dependencies.
-
-  @class Model
-  @namespace DS
-*/
-Model.reopen({
-  notifyBelongsToAdded: function(key, relationship) {
-    this.notifyPropertyChange(key);
-  },
-
-  notifyBelongsToRemoved: function(key) {
-    this.notifyPropertyChange(key);
-  }
-});
-
-export default belongsTo;
+export {
+  BelongsToRelationship,
+  belongsTo
+};

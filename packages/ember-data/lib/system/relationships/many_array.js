@@ -1,13 +1,11 @@
-import RecordArray from "ember-data/system/record_arrays/record_array";
-
 /**
   @module ember-data
 */
 
-var get = Ember.get, set = Ember.set;
+var set = Ember.set;
 
 /**
-  A `ManyArray` is a `RecordArray` that represents the contents of a has-many
+  A `ManyArray` is a `MutableArray` that represents the contents of a has-many
   relationship.
 
   The `ManyArray` is instantiated lazily the first time the relationship is
@@ -35,25 +33,12 @@ var get = Ember.get, set = Ember.set;
   property to be set to the post that contained
   the has-many.
 
-  We call the record to which a relationship belongs the
-  relationship's _owner_.
-
   @class ManyArray
   @namespace DS
-  @extends DS.RecordArray
+  @extends Ember.Object
+  @uses Ember.MutableArray
 */
-export default RecordArray.extend({
-  init: function() {
-    this._super.apply(this, arguments);
-  },
-
-  /**
-    `true` if the relationship is polymorphic, `false` otherwise.
-
-    @property {Boolean} isPolymorphic
-    @private
-  */
-  isPolymorphic: false,
+export default Ember.Object.extend(Ember.MutableArray, {
 
   /**
     The loading state of this array
@@ -70,7 +55,6 @@ export default RecordArray.extend({
    */
   relationship: null,
 
-
   /**
     Used for async `hasMany` arrays
     to keep track of when they will resolve.
@@ -80,12 +64,33 @@ export default RecordArray.extend({
   */
   promise: null,
 
+  length: Ember.computed(function() {
+    return this.relationship.members.size;
+  }).volatile(),
+  
+  objectAt: function (index) {
+    return this.relationship.members.get(index);
+  },
+  
+  replace: function (idx, amt, objects){
+    var relationship = this.relationship, records;
+    
+    if (amt > 0){
+      records = relationship.members.slice(idx, idx+amt);
+      relationship.removeRecords(records);
+    }
+    
+    if (objects){
+      relationship.addRecords(objects, idx);
+    }
+  },
+
   /**
     @method loadingRecordsCount
     @param {Number} count
     @private
   */
-  loadingRecordsCount: function(count) {
+  loadingRecordsCount: function (count) {
     this.loadingRecordsCount = count;
   },
 
@@ -93,7 +98,7 @@ export default RecordArray.extend({
     @method loadedRecord
     @private
   */
-  loadedRecord: function() {
+  loadedRecord: function () {
     this.loadingRecordsCount--;
     if (this.loadingRecordsCount === 0) {
       set(this, 'isLoaded', true);
@@ -101,16 +106,6 @@ export default RecordArray.extend({
     }
   },
 
-  replaceContent: function(idx, amt, objects){
-    var records;
-    if (amt > 0){
-      records = get(this, 'content').slice(idx, idx+amt);
-      this.get('relationship').removeRecords(records);
-    }
-    if (objects){
-      this.get('relationship').addRecords(objects, idx);
-    }
-  },
   /**
     @method reload
     @public
@@ -128,11 +123,12 @@ export default RecordArray.extend({
     @return {DS.Model} record
   */
   createRecord: function(hash) {
-    var store = get(this, 'store');
-    var type = get(this, 'type');
+    var store = this.relationship.record.store;
+    var type = this.relationship.meta.type;
+    var isPolymorphic = this.relationship.meta.options.polymorphic;
     var record;
 
-    Ember.assert("You cannot add '" + type.typeKey + "' records to this polymorphic relationship.", !get(this, 'isPolymorphic'));
+    Ember.assert("You cannot add '" + type.typeKey + "' records to this polymorphic relationship.", !isPolymorphic);
 
     record = store.createRecord(type, hash);
     this.pushObject(record);

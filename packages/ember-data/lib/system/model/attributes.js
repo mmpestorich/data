@@ -1,19 +1,19 @@
 import Model from "ember-data/system/model/model";
-import {
-  Map
-} from "ember-data/system/map";
+import { Map } from "ember-data/system/map";
 
 /**
   @module ember-data
 */
 
-var get = Ember.get;
+var hasOwnProperty = Object.prototype.hasOwnProperty,
+    get = Ember.get;
 
 /**
   @class Model
   @namespace DS
 */
 Model.reopenClass({
+  
   /**
     A map whose keys are the attributes of the model (properties
     described by DS.attr) and whose values are the meta object for the
@@ -46,14 +46,14 @@ Model.reopenClass({
     @type {Ember.Map}
     @readOnly
   */
-  attributes: Ember.computed(function() {
+  attributes: Ember.computed(function () {
     var map = Map.create();
 
-    this.eachComputedProperty(function(name, meta) {
+    this.eachComputedProperty(function (name, meta) {
       if (meta.isAttribute) {
         Ember.assert("You may not set `id` as an attribute on your model. Please remove any lines that look like: `id: DS.attr('<type>')` from " + this.toString(), name !== 'id');
 
-        meta.name = name;
+        meta.key = name;
         map.set(name, meta);
       }
     });
@@ -92,10 +92,10 @@ Model.reopenClass({
     @type {Ember.Map}
     @readOnly
   */
-  transformedAttributes: Ember.computed(function() {
+  transformedAttributes: Ember.computed(function () {
     var map = Map.create();
 
-    this.eachAttribute(function(key, meta) {
+    this.eachAttribute(function (key, meta) {
       if (meta.type) {
         map.set(key, meta.type);
       }
@@ -145,10 +145,10 @@ Model.reopenClass({
     @param {Object} [target] The target object to use
     @static
   */
-  eachAttribute: function(callback, binding) {
-    get(this, 'attributes').forEach(function(meta, name) {
-      callback.call(binding, name, meta);
-    }, binding);
+  eachAttribute: function (callback, target) {
+    get(this, 'attributes').forEach(function (meta, name) {
+      callback.call(target, name, meta);
+    }, target);
   },
 
   /**
@@ -193,16 +193,20 @@ Model.reopenClass({
     @param {Object} [target] The target object to use
     @static
   */
-  eachTransformedAttribute: function(callback, binding) {
-    get(this, 'transformedAttributes').forEach(function(type, name) {
-      callback.call(binding, name, type);
+  eachTransformedAttribute: function (callback, target) {
+    get(this, 'transformedAttributes').forEach(function (type, name) {
+      callback.call(target, name, type);
     });
   }
 });
 
-
+/**
+  @class Model
+  @namespace DS
+*/
 Model.reopen({
-  eachAttribute: function(callback, binding) {
+  
+  eachAttribute: function (callback, binding) {
     this.constructor.eachAttribute(callback, binding);
   }
 });
@@ -216,15 +220,15 @@ function getDefaultValue(record, options, key) {
 }
 
 function hasValue(record, key) {
-  return record._attributes.hasOwnProperty(key) ||
-         record._inFlightAttributes.hasOwnProperty(key) ||
-         record._data.hasOwnProperty(key);
+  return hasOwnProperty.call(record._attributes, key) ||
+         hasOwnProperty.call(record._inFlightAttributes, key) ||
+         hasOwnProperty.call(record._data, key);
 }
 
 function getValue(record, key) {
-  if (record._attributes.hasOwnProperty(key)) {
+  if (hasOwnProperty.call(record._attributes, key)) {
     return record._attributes[key];
-  } else if (record._inFlightAttributes.hasOwnProperty(key)) {
+  } else if (hasOwnProperty.call(record._inFlightAttributes, key)) {
     return record._inFlightAttributes[key];
   } else {
     return record._data[key];
@@ -264,15 +268,16 @@ function getValue(record, key) {
   @for DS
   @param {String} type the attribute type
   @param {Object} options a hash of options
-  @return {Attribute}
+  @return {Ember.computed}
 */
-
 export default function attr(type, options) {
   options = options || {};
 
   var meta = {
+    key: null,
     type: type,
     isAttribute: true,
+    kind: 'attr',
     options: options
   };
 
@@ -286,8 +291,8 @@ export default function attr(type, options) {
         // the 'didSetProperty' handler if it is no different from the original value
         this._attributes[key] = value;
 
-        this.send('didSetProperty', {
-          name: key,
+        this.send('propertyDidChange', {
+          meta: meta,
           oldValue: oldValue,
           originalValue: this._data[key],
           value: value

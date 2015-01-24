@@ -4,183 +4,32 @@
 
 var get = Ember.get;
 var set = Ember.set;
+var classify = Ember.String.classify;
 /*
   This file encapsulates the various states that a record can transition
   through during its lifecycle.
 */
-/**
-  ### State
 
-  Each record has a `currentState` property that explicitly tracks what
-  state a record is in at any given time. For instance, if a record is
-  newly created and has not yet been sent to the adapter to be saved,
-  it would be in the `root.loaded.created.uncommitted` state.  If a
-  record has had local modifications made to it that are in the
-  process of being saved, the record would be in the
-  `root.loaded.updated.inFlight` state. (This state paths will be
-  explained in more detail below.)
+function propertyDidChange(record, context) {
+  var store = get(record, 'store'),
+      meta = context.meta, key = meta.key, kind = meta.kind,
+      adapter = store.adapterFor(record.constructor),
+      fn = adapter['dirtyRecordFor' + classify(kind) + 'Change'];
 
-  Events are sent by the record or its store to the record's
-  `currentState` property. How the state reacts to these events is
-  dependent on which state it is in. In some states, certain events
-  will be invalid and will cause an exception to be raised.
-
-  States are hierarchical and every state is a substate of the
-  `RootState`. For example, a record can be in the
-  `root.deleted.uncommitted` state, then transition into the
-  `root.deleted.inFlight` state. If a child state does not implement
-  an event handler, the state manager will attempt to invoke the event
-  on all parent states until the root state is reached. The state
-  hierarchy of a record is described in terms of a path string. You
-  can determine a record's current state by getting the state's
-  `stateName` property:
-
-  ```javascript
-  record.get('currentState.stateName');
-  //=> "root.created.uncommitted"
-   ```
-
-  The hierarchy of valid states that ship with ember data looks like
-  this:
-
-  ```text
-  * root
-    * deleted
-      * saved
-      * uncommitted
-      * inFlight
-    * empty
-    * loaded
-      * created
-        * uncommitted
-        * inFlight
-      * saved
-      * updated
-        * uncommitted
-        * inFlight
-    * loading
-  ```
-
-  The `DS.Model` states are themselves stateless. What that means is
-  that, the hierarchical states that each of *those* points to is a
-  shared data structure. For performance reasons, instead of each
-  record getting its own copy of the hierarchy of states, each record
-  points to this global, immutable shared instance. How does a state
-  know which record it should be acting on? We pass the record
-  instance into the state's event handlers as the first argument.
-
-  The record passed as the first parameter is where you should stash
-  state about the record if needed; you should never store data on the state
-  object itself.
-
-  ### Events and Flags
-
-  A state may implement zero or more events and flags.
-
-  #### Events
-
-  Events are named functions that are invoked when sent to a record. The
-  record will first look for a method with the given name on the
-  current state. If no method is found, it will search the current
-  state's parent, and then its grandparent, and so on until reaching
-  the top of the hierarchy. If the root is reached without an event
-  handler being found, an exception will be raised. This can be very
-  helpful when debugging new features.
-
-  Here's an example implementation of a state with a `myEvent` event handler:
-
-  ```javascript
-  aState: DS.State.create({
-    myEvent: function(manager, param) {
-      console.log("Received myEvent with", param);
+  if (fn(record, context)) {
+    if (meta.isRelationship) {
+      record._relationships[key].isDirty = true;
     }
-  })
-  ```
-
-  To trigger this event:
-
-  ```javascript
-  record.send('myEvent', 'foo');
-  //=> "Received myEvent with foo"
-  ```
-
-  Note that an optional parameter can be sent to a record's `send()` method,
-  which will be passed as the second parameter to the event handler.
-
-  Events should transition to a different state if appropriate. This can be
-  done by calling the record's `transitionTo()` method with a path to the
-  desired state. The state manager will attempt to resolve the state path
-  relative to the current state. If no state is found at that path, it will
-  attempt to resolve it relative to the current state's parent, and then its
-  parent, and so on until the root is reached. For example, imagine a hierarchy
-  like this:
-
-      * created
-        * uncommitted <-- currentState
-        * inFlight
-      * updated
-        * inFlight
-
-  If we are currently in the `uncommitted` state, calling
-  `transitionTo('inFlight')` would transition to the `created.inFlight` state,
-  while calling `transitionTo('updated.inFlight')` would transition to
-  the `updated.inFlight` state.
-
-  Remember that *only events* should ever cause a state transition. You should
-  never call `transitionTo()` from outside a state's event handler. If you are
-  tempted to do so, create a new event and send that to the state manager.
-
-  #### Flags
-
-  Flags are Boolean values that can be used to introspect a record's current
-  state in a more user-friendly way than examining its state path. For example,
-  instead of doing this:
-
-  ```javascript
-  var statePath = record.get('stateManager.currentPath');
-  if (statePath === 'created.inFlight') {
-    doSomething();
-  }
-  ```
-
-  You can say:
-
-  ```javascript
-  if (record.get('isNew') && record.get('isSaving')) {
-    doSomething();
-  }
-  ```
-
-  If your state does not set a value for a given flag, the value will
-  be inherited from its parent (or the first place in the state hierarchy
-  where it is defined).
-
-  The current set of flags are defined below. If you want to add a new flag,
-  in addition to the area below, you will also need to declare it in the
-  `DS.Model` class.
-
-
-   * [isEmpty](DS.Model.html#property_isEmpty)
-   * [isLoading](DS.Model.html#property_isLoading)
-   * [isLoaded](DS.Model.html#property_isLoaded)
-   * [isDirty](DS.Model.html#property_isDirty)
-   * [isSaving](DS.Model.html#property_isSaving)
-   * [isDeleted](DS.Model.html#property_isDeleted)
-   * [isNew](DS.Model.html#property_isNew)
-   * [isValid](DS.Model.html#property_isValid)
-
-  @namespace DS
-  @class RootState
-*/
-
-function didSetProperty(record, context) {
-  if (context.value === context.originalValue) {
-    delete record._attributes[context.name];
-    record.send('propertyWasReset', context.name);
-  } else if (context.value !== context.oldValue) {
     record.send('becomeDirty');
+  } else {
+    if (meta.isAttribute) {
+      delete record._attributes[key];
+    } else  if (meta.isRelationship) {
+      record._relationships[key].isDirty = false;
+    }
+    record.send('propertyWasReset', key);
   }
-
+  
   record.updateRecordArraysLater();
 }
 
@@ -240,15 +89,23 @@ var DirtyState = {
   // have not yet begun to be saved, and are not invalid.
   uncommitted: {
     // EVENTS
-    didSetProperty: didSetProperty,
+    propertyDidChange: propertyDidChange,
 
     //TODO(Igor) reloading now triggers a
     //loadingData event, though it seems fine?
     loadingData: Ember.K,
 
     propertyWasReset: function(record, name) {
-      var length = Ember.keys(record._attributes);
-      var stillDirty = length > 0;
+      var stillDirty = Ember.keys(record._attributes).length > 0;
+      
+      if (stillDirty) { return; }
+
+      var relationships = record._relationships;
+      record.constructor.eachComputedProperty(function (key, meta) {
+        if (meta.isRelationship) {
+          stillDirty &= relationships[key].isDirty;
+        }
+      });
 
       if (!stillDirty) { record.send('rolledBack'); }
     },
@@ -286,8 +143,10 @@ var DirtyState = {
     isSaving: true,
 
     // EVENTS
-    didSetProperty: didSetProperty,
+    propertyDidChange: propertyDidChange,
+
     becomeDirty: Ember.K,
+
     pushedData: Ember.K,
 
     unloadRecord: function(record) {
@@ -327,10 +186,9 @@ var DirtyState = {
       record.disconnectRelationships();
     },
 
-    didSetProperty: function(record, context) {
-      get(record, 'errors').remove(context.name);
-
-      didSetProperty(record, context);
+    propertyDidChange: function(record, context) {
+      get(record, 'errors').remove(context.meta.key);
+      propertyDidChange(record, context);
     },
 
     becomeDirty: Ember.K,
@@ -427,6 +285,170 @@ updatedState.uncommitted.deleteRecord = function(record) {
   record.disconnectRelationships();
 };
 
+/**
+  ### State
+  
+  Each record has a `currentState` property that explicitly tracks what
+  state a record is in at any given time. For instance, if a record is
+  newly created and has not yet been sent to the adapter to be saved,
+  it would be in the `root.loaded.created.uncommitted` state.  If a
+  record has had local modifications made to it that are in the
+  process of being saved, the record would be in the
+  `root.loaded.updated.inFlight` state. (This state paths will be
+  explained in more detail below.)
+  
+  Events are sent by the record or its store to the record's
+  `currentState` property. How the state reacts to these events is
+  dependent on which state it is in. In some states, certain events
+  will be invalid and will cause an exception to be raised.
+  
+  States are hierarchical and every state is a substate of the
+  `RootState`. For example, a record can be in the
+  `root.deleted.uncommitted` state, then transition into the
+  `root.deleted.inFlight` state. If a child state does not implement
+  an event handler, the state manager will attempt to invoke the event
+  on all parent states until the root state is reached. The state
+  hierarchy of a record is described in terms of a path string. You
+  can determine a record's current state by getting the state's
+  `stateName` property:
+  
+  ```javascript
+  record.get('currentState.stateName');
+  //=> "root.created.uncommitted"
+  ```
+  
+  The hierarchy of valid states that ship with ember data looks like
+  this:
+  
+  ```text
+  * root
+  * deleted
+  * saved
+  * uncommitted
+  * inFlight
+  * empty
+  * loaded
+  * created
+  * uncommitted
+  * inFlight
+  * saved
+  * updated
+  * uncommitted
+  * inFlight
+  * loading
+  ```
+  
+  The `DS.Model` states are themselves stateless. What that means is
+  that, the hierarchical states that each of *those* points to is a
+  shared data structure. For performance reasons, instead of each
+  record getting its own copy of the hierarchy of states, each record
+  points to this global, immutable shared instance. How does a state
+  know which record it should be acting on? We pass the record
+  instance into the state's event handlers as the first argument.
+  
+  The record passed as the first parameter is where you should stash
+  state about the record if needed; you should never store data on the state
+  object itself.
+  
+  ### Events and Flags
+  
+  A state may implement zero or more events and flags.
+  
+  #### Events
+  
+  Events are named functions that are invoked when sent to a record. The
+  record will first look for a method with the given name on the
+  current state. If no method is found, it will search the current
+  state's parent, and then its grandparent, and so on until reaching
+  the top of the hierarchy. If the root is reached without an event
+  handler being found, an exception will be raised. This can be very
+  helpful when debugging new features.
+  
+  Here's an example implementation of a state with a `myEvent` event handler:
+  
+  ```javascript
+  aState: DS.State.create({
+    myEvent: function(manager, param) {
+      console.log("Received myEvent with", param);
+    }
+  })
+  ```
+  
+  To trigger this event:
+  
+  ```javascript
+  record.send('myEvent', 'foo');
+  //=> "Received myEvent with foo"
+  ```
+  
+  Note that an optional parameter can be sent to a record's `send()` method,
+  which will be passed as the second parameter to the event handler.
+  
+  Events should transition to a different state if appropriate. This can be
+  done by calling the record's `transitionTo()` method with a path to the
+  desired state. The state manager will attempt to resolve the state path
+  relative to the current state. If no state is found at that path, it will
+  attempt to resolve it relative to the current state's parent, and then its
+  parent, and so on until the root is reached. For example, imagine a hierarchy
+  like this:
+  
+  * created
+  * uncommitted <-- currentState
+  * inFlight
+  * updated
+  * inFlight
+  
+  If we are currently in the `uncommitted` state, calling
+  `transitionTo('inFlight')` would transition to the `created.inFlight` state,
+  while calling `transitionTo('updated.inFlight')` would transition to
+  the `updated.inFlight` state.
+  
+  Remember that *only events* should ever cause a state transition. You should
+  never call `transitionTo()` from outside a state's event handler. If you are
+  tempted to do so, create a new event and send that to the state manager.
+  
+  #### Flags
+  
+  Flags are Boolean values that can be used to introspect a record's current
+  state in a more user-friendly way than examining its state path. For example,
+  instead of doing this:
+  
+  ```javascript
+  var statePath = record.get('currentState.stateName');
+  if (statePath === 'root.loaded.created.inFlight') {
+    doSomething();
+  }
+  ```
+  
+  You can say:
+  
+  ```javascript
+  if (record.get('isNew') && record.get('isSaving')) {
+    doSomething();
+  }
+  ```
+  
+  If your state does not set a value for a given flag, the value will
+  be inherited from its parent (or the first place in the state hierarchy
+  where it is defined).
+  
+  The current set of flags are defined below. If you want to add a new flag,
+  in addition to the area below, you will also need to declare it in the
+  `DS.Model` class.
+  
+  
+  * [isEmpty](DS.Model.html#property_isEmpty)
+  * [isLoading](DS.Model.html#property_isLoading)
+  * [isLoaded](DS.Model.html#property_isLoaded)
+  * [isDirty](DS.Model.html#property_isDirty)
+  * [isSaving](DS.Model.html#property_isSaving)
+  * [isDeleted](DS.Model.html#property_isDeleted)
+  * [isNew](DS.Model.html#property_isNew)
+  * [isValid](DS.Model.html#property_isValid)
+  
+  @namespace DS
+  @class RootState
+*/
 var RootState = {
   // FLAGS
   isEmpty: false,
@@ -445,13 +467,13 @@ var RootState = {
   // in-flight state, rolling back the record doesn't move
   // you out of the in-flight state.
   rolledBack: Ember.K,
+
   unloadRecord: function(record) {
     // clear relationships before moving to deleted state
     // otherwise it fails
     record.clearRelationships();
     record.transitionTo('deleted.saved');
   },
-
 
   propertyWasReset: Ember.K,
 
@@ -466,6 +488,8 @@ var RootState = {
     isEmpty: true,
 
     // EVENTS
+    propertyDidChange: Ember.K,
+
     loadingData: function(record, promise) {
       record._loadingPromise = promise;
       record.transitionTo('loading');
@@ -497,6 +521,8 @@ var RootState = {
     },
 
     // EVENTS
+    propertyDidChange: Ember.K,
+
     pushedData: function(record) {
       record.transitionTo('loaded.saved');
       record.triggerLater('didLoad');
@@ -535,7 +561,7 @@ var RootState = {
         var isDirty = false;
 
         for (var prop in attrs) {
-          if (attrs.hasOwnProperty(prop)) {
+          if (Object.prototype.hasOwnProperty.call(attrs, prop)) {
             isDirty = true;
             break;
           }
@@ -547,7 +573,7 @@ var RootState = {
       },
 
       // EVENTS
-      didSetProperty: didSetProperty,
+      propertyDidChange: propertyDidChange,
 
       pushedData: Ember.K,
 
@@ -620,6 +646,8 @@ var RootState = {
 
       // EVENTS
 
+      propertyDidChange: Ember.K,
+
       willCommit: function(record) {
         record.transitionTo('inFlight');
       },
@@ -629,6 +657,7 @@ var RootState = {
       },
 
       becomeDirty: Ember.K,
+
       deleteRecord: Ember.K,
 
       rolledBack: function(record) {
@@ -650,6 +679,7 @@ var RootState = {
 
       // TODO: More robust semantics around save-while-in-flight
       willCommit: Ember.K,
+
       didCommit: function(record) {
         record.transitionTo('saved');
 
@@ -679,6 +709,10 @@ var RootState = {
         record.triggerLater('didCommit', record);
       },
 
+      //EVENTS
+
+      propertyDidChange: Ember.K,
+
       willCommit: Ember.K,
 
       didCommit: Ember.K
@@ -691,7 +725,6 @@ var RootState = {
     } else {
       record.triggerLater('didUpdate', record);
     }
-
     record.triggerLater('didCommit', record);
   }
 };
